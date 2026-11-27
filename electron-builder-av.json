@@ -21,6 +21,12 @@
     "output": "./dist/"
   },
   "npmRebuild": false,
+  "detectUpdateChannel": false,
+  "publish": {
+    "provider": "github",
+    "owner": "jacinlowe",
+    "repo": "drawio-AV-desktop"
+  },
   "afterPack": "build/fuses.mjs",
   "toolsets": {
     "appimage": "1.0.3"
@@ -30,6 +36,7 @@
   },
   "win": {
     "icon": "build/icon.png",
+    "verifyUpdateCodeSignature": false,
     "target": [
       {
         "target": "nsis",
@@ -58,6 +65,13 @@
     "target": [
       {
         "target": "dmg",
+        "arch": [
+          "x64",
+          "arm64"
+        ]
+      },
+      {
+        "target": "zip",
         "arch": [
           "x64",
           "arm64"

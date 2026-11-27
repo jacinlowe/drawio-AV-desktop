@@ -60,16 +60,20 @@ jobs:
             fi
           fi
 
-          # Ensure our custom AV npm scripts are always present in package.json after merge
+          # Ensure our custom AV npm scripts and repository metadata are always present in package.json after merge
           node - <<'NODE_EOF'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           pkg.scripts = Object.assign({}, pkg.scripts, {
             prestart: 'node ./sync-plugins.cjs',
             'sync-plugins': 'node ./sync-plugins.cjs',
-            'build-win': 'node ./sync.cjs disableUpdate && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win --dir --publish never',
-            'dist-win': 'node ./sync.cjs disableUpdate && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win nsis zip --x64 --publish never'
+            'build-win': 'node ./sync.cjs && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win --dir --publish never',
+            'dist-win': 'node ./sync.cjs && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win nsis zip --x64 --publish never'
           });
+          pkg.repository = {
+            type: 'git',
+            url: 'https://github.com/jacinlowe/drawio-AV-desktop.git'
+          };
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n', 'utf8');
           NODE_EOF
           git add package.json

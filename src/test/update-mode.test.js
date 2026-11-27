@@ -49,9 +49,9 @@ describe('getUpdateMode on Windows', () =>
 
 describe('getUpdateMode on macOS', () =>
 {
-	test('updates automatically', () =>
+	test('notifies for unsigned AV builds', () =>
 	{
-		assert.equal(mode({platform: 'darwin', execPath: '/Applications/draw.io.app/Contents/MacOS/draw.io'}), 'auto');
+		assert.equal(mode({platform: 'darwin', execPath: '/Applications/draw.io.app/Contents/MacOS/draw.io'}), 'notify');
 	});
 });
 
@@ -87,8 +87,8 @@ describe('getUpdateMode on Linux', () =>
 
 describe('getReleaseUrl', () =>
 {
-	test('points at the version tag', () =>
+	test('points at the AV repository version tag', () =>
 	{
-		assert.equal(getReleaseUrl('31.8.0'), 'https://github.com/jgraph/drawio-desktop/releases/tag/v31.8.0');
+		assert.equal(getReleaseUrl('32.7.4-av.12'), 'https://github.com/jacinlowe/drawio-AV-desktop/releases/tag/v32.7.4-av.12');
 	});
 });

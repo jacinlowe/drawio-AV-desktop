@@ -29,7 +29,67 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      drawio_version: ${{ steps.version.outputs.drawio_version }}
+      av_version: ${{ steps.version.outputs.av_version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout drawio-AV-desktop (with drawio submodule)
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.desktop_ref || github.sha }}
+          submodules: true
+          persist-credentials: false
+          path: desktop
+
+      - name: Compute monotonic AV semver version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DRAWIO_VER=$(tr -d '[:space:]' < desktop/drawio/VERSION)
+          if [[ ! "$DRAWIO_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid drawio/VERSION: $DRAWIO_VER"
+            exit 1
+          fi
+
+          EXISTING_TAGS=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" -q '.[].tag_name' 2>/dev/null || true)
+          MAX_AV=0
+          while IFS= read -r t; do
+            if [[ "$t" =~ -av\.([0-9]+) ]]; then
+              num="${BASH_REMATCH[1]}"
+              if (( 10#$num > MAX_AV )); then
+                MAX_AV=$((10#$num))
+              fi
+            fi
+          done <<< "$EXISTING_TAGS"
+
+          BUILD_NUM="$GITHUB_RUN_NUMBER"
+          if (( MAX_AV + 1 > BUILD_NUM )); then
+            BUILD_NUM=$((MAX_AV + 1))
+          fi
+
+          while gh release view "v${DRAWIO_VER}-av.${BUILD_NUM}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+                git -C desktop ls-remote --exit-code --tags origin "refs/tags/v${DRAWIO_VER}-av.${BUILD_NUM}" >/dev/null 2>&1; do
+            BUILD_NUM=$((BUILD_NUM + 1))
+          done
+
+          AV_VER="${DRAWIO_VER}-av.${BUILD_NUM}"
+          TAG="v${AV_VER}"
+
+          echo "Computed AV version: $AV_VER (tag: $TAG)"
+          {
+            echo "drawio_version=$DRAWIO_VER"
+            echo "av_version=$AV_VER"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
     permissions:
       contents: read
     strategy:
@@ -41,18 +101,25 @@ jobs:
             builder_args: --win nsis zip --x64
             artifact_paths: |
               desktop/dist/drawio-AV-*.exe
+              desktop/dist/drawio-AV-*.exe.blockmap
               desktop/dist/drawio-AV-*.zip
+              desktop/dist/latest.yml
           - os: macos-latest
             platform: macos
-            builder_args: --mac dmg --x64 --arm64
+            builder_args: --mac dmg zip --x64 --arm64
             artifact_paths: |
               desktop/dist/drawio-AV-*.dmg
+              desktop/dist/drawio-AV-*.dmg.blockmap
+              desktop/dist/drawio-AV-*.zip
+              desktop/dist/drawio-AV-*.zip.blockmap
+              desktop/dist/latest-mac.yml
           - os: ubuntu-latest
             platform: linux
             builder_args: --linux AppImage deb --x64
             artifact_paths: |
               desktop/dist/drawio-AV-*.AppImage
               desktop/dist/drawio-AV-*.deb
+              desktop/dist/latest-linux.yml
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout drawio-AV-desktop (with drawio submodule)
@@ -85,9 +152,11 @@ jobs:
 
       - name: Install dependencies and sync plugins (${{ matrix.platform }})
         working-directory: desktop
+        env:
+          AV_VERSION: ${{ needs.prepare.outputs.av_version }}
         run: |
           npm ci
-          npm run sync -- disableUpdate
+          npm run sync
           npm run sync-plugins
 
       - name: Run unit tests
@@ -109,7 +178,9 @@ jobs:
           path: ${{ matrix.artifact_paths }}
 
   release:
-    needs: build
+    needs:
+      - prepare
+      - build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -140,16 +211,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
           TRIGGER_REASON: ${{ inputs.trigger_reason }}
-          DISPATCH_SHA: ${{ github.event.client_payload.plugin_sha }}
-          DISPATCH_MSG: ${{ github.event.client_payload.plugin_message }}
+          DRAWIO_VER: ${{ needs.prepare.outputs.drawio_version }}
+          AV_VER: ${{ needs.prepare.outputs.av_version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          DRAWIO_VER=$(tr -d '[:space:]' < desktop/drawio/VERSION)
-          BASE_TAG="v${DRAWIO_VER}-av.${GITHUB_RUN_NUMBER}"
-          TAG="$BASE_TAG"
-          SUFFIX=1
-          while gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; do
-            TAG="${BASE_TAG}.${SUFFIX}"
-            SUFFIX=$((SUFFIX + 1))
+          for manifest in latest.yml latest-mac.yml latest-linux.yml; do
+            if [ ! -f "release-assets/$manifest" ]; then
+              echo "::error::Missing electron-updater manifest: $manifest"
+              exit 1
+            fi
           done
 
           DESKTOP_FULL_SHA=$(git -C desktop rev-parse HEAD)
@@ -184,12 +254,16 @@ jobs:
           $TRIGGER_DESC
 
           ### Versions & Commits
-          - **Core draw.io version:** \`$DRAWIO_VER\`
+          - **AV build version:** \`$AV_VER\` (core draw.io \`$DRAWIO_VER\`)
           - **Desktop repo:** [\`$DESKTOP_SHA\`](https://github.com/$GITHUB_REPOSITORY/commit/$DESKTOP_FULL_SHA)
           - **AV Plugins repo:** [\`$PLUGINS_SHA\`](https://github.com/jacinlowe/drawio-av-plugins/commit/$PLUGINS_FULL_SHA) — $PLUGINS_MSG
 
           ### Bundled AV Plugins
           $PLUGIN_LIST
+
+          ### In-App Updates
+          - **Windows (NSIS `.exe`) & Linux (`.AppImage`):** Updates download automatically in the background and install on restart/quit.
+          - **macOS & `.zip`/`.deb` installs:** Notifies in-app when a new AV release is available with a direct link to this release page.
 
           > **Note on unsigned builds:** Because these packages are not signed with commercial Apple/Microsoft certificates:
           > - **Windows:** Click *More info* → *Run anyway* if SmartScreen prompts on first launch.

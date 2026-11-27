@@ -52,3 +52,49 @@ describe('electron-builder publish config', {skip: !windowsConfigs && 'no Window
 		assert.equal(config.publish.channel, undefined);
 	});
 });
+
+describe('AV updater & sync configuration', () =>
+{
+	test('electron-builder-av.json publishes latest*.yml to jacinlowe/drawio-AV-desktop', () =>
+	{
+		const config = readConfig('electron-builder-av.json');
+		assert.equal(config.publish.provider, 'github');
+		assert.equal(config.publish.owner, 'jacinlowe');
+		assert.equal(config.publish.repo, 'drawio-AV-desktop');
+		assert.equal(config.detectUpdateChannel, false);
+		assert.equal(config.win.verifyUpdateCodeSignature, false);
+		const macTargets = config.mac.target.map(t => t.target);
+		assert.ok(macTargets.includes('dmg') && macTargets.includes('zip'));
+	});
+
+	test('sync.cjs resolves AV semver versions and enables updates by default', async () =>
+	{
+		const os = await import('os');
+		const { createRequire } = await import('module');
+		const req = createRequire(import.meta.url);
+		const { runSync, resolveAvVersion } = req('../../sync.cjs');
+
+		assert.equal(resolveAvVersion('32.7.4', undefined), '32.7.4-av.0');
+		assert.equal(resolveAvVersion('32.7.4', '32.7.4-av.15'), '32.7.4-av.15');
+		assert.throws(() => resolveAvVersion('32.7.4', '32.8.0-av.15'), /does not match/);
+		assert.throws(() => resolveAvVersion('32.7.4', '32.7.4.15'), /invalid version/);
+
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'av-sync-test-'));
+		try
+		{
+			fs.mkdirSync(path.join(tmpDir, 'drawio'), { recursive: true });
+			fs.mkdirSync(path.join(tmpDir, 'src', 'main'), { recursive: true });
+			fs.writeFileSync(path.join(tmpDir, 'drawio', 'VERSION'), '32.7.4\n');
+			fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'draw.io', version: '0.0.0' }));
+
+			const res = runSync({ rootDir: tmpDir, avVersion: '32.7.4-av.9', disableUpdate: false });
+			assert.equal(res.version, '32.7.4-av.9');
+			assert.equal(JSON.parse(fs.readFileSync(path.join(tmpDir, 'package.json'), 'utf8')).version, '32.7.4-av.9');
+			assert.match(fs.readFileSync(path.join(tmpDir, 'src', 'main', 'disableUpdate.js'), 'utf8'), /return false;/);
+		}
+		finally
+		{
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		}
+	});
+});

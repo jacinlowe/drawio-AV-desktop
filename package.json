@@ -1,6 +1,6 @@
 {
   "name": "draw.io",
-  "version": "32.7.4",
+  "version": "32.7.4-av.0",
   "description": "draw.io desktop",
   "exports": "./src/main/electron.js",
   "type": "module",
@@ -13,15 +13,15 @@
     "start": "electron .",
     "sync": "node ./sync.cjs",
     "sync-plugins": "node ./sync-plugins.cjs",
-    "build-win": "node ./sync.cjs disableUpdate && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win --dir --publish never",
-    "dist-win": "node ./sync.cjs disableUpdate && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win nsis zip --x64 --publish never",
+    "build-win": "node ./sync.cjs && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win --dir --publish never",
+    "dist-win": "node ./sync.cjs && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win nsis zip --x64 --publish never",
     "test": "node --test \"src/test/*.test.js\"",
     "release-linux": "electron-builder --config electron-builder-linux-mac.json --publish always",
     "release-snap": "electron-builder --config electron-builder-snap.json --publish never"
   },
   "repository": {
     "type": "git",
-    "url": "git@github.com:jgraph/drawio-desktop.git"
+    "url": "https://github.com/jacinlowe/drawio-AV-desktop.git"
   },
   "keywords": [
     "draw.io",

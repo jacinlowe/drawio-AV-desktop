@@ -1,29 +1,75 @@
 const fs = require('fs')
 const path = require('path')
 
-const appjsonpath = path.join(__dirname, 'package.json')
-const disableUpdatePath = path.join(__dirname, 'src/main', 'disableUpdate.js')
-const versionPath = path.join(__dirname, 'drawio', 'VERSION')
-
-if (!fs.existsSync(versionPath))
+function resolveAvVersion(baseVersion, envAvVersion)
 {
-	console.error('Error: drawio/VERSION not found. Did you clone with --recursive or run git submodule update --init?')
-	process.exit(1)
+	if (!/^\d+\.\d+\.\d+$/.test(baseVersion))
+	{
+		throw new Error('drawio/VERSION contains invalid version: "' + baseVersion + '"')
+	}
+
+	if (envAvVersion != null && envAvVersion.trim() !== '')
+	{
+		const trimmed = envAvVersion.trim()
+
+		if (!/^\d+\.\d+\.\d+-av\.\d+$/.test(trimmed))
+		{
+			throw new Error('AV_VERSION contains invalid version: "' + trimmed + '"')
+		}
+
+		if (!trimmed.startsWith(baseVersion + '-av.'))
+		{
+			throw new Error('AV_VERSION "' + trimmed + '" does not match drawio/VERSION "' + baseVersion + '"')
+		}
+
+		return trimmed
+	}
+
+	return baseVersion + '-av.0'
 }
 
-let ver = fs.readFileSync(versionPath, 'utf8').trim()
-//let ver = '14.1.5' // just to test autoupdate
-
-if (!/^\d+\.\d+\.\d+$/.test(ver))
+function runSync(options = {})
 {
-	console.error('Error: drawio/VERSION contains invalid version: "' + ver + '"')
-	process.exit(1)
+	const rootDir = options.rootDir || __dirname
+	const disable = options.disableUpdate === true
+	const envAvVersion = options.avVersion !== undefined ? options.avVersion : process.env.AV_VERSION
+
+	const appjsonpath = path.join(rootDir, 'package.json')
+	const disableUpdatePath = path.join(rootDir, 'src/main', 'disableUpdate.js')
+	const versionPath = path.join(rootDir, 'drawio', 'VERSION')
+
+	if (!fs.existsSync(versionPath))
+	{
+		throw new Error('drawio/VERSION not found. Did you clone with --recursive or run git submodule update --init?')
+	}
+
+	const baseVer = fs.readFileSync(versionPath, 'utf8').trim()
+	const finalVer = resolveAvVersion(baseVer, envAvVersion)
+
+	const pj = JSON.parse(fs.readFileSync(appjsonpath, 'utf8'))
+	pj.version = finalVer
+
+	fs.writeFileSync(appjsonpath, JSON.stringify(pj, null, 2) + '\n', 'utf8')
+	fs.writeFileSync(
+		disableUpdatePath,
+		'export function disableUpdate() { return ' + (disable ? 'true' : 'false') + ';}',
+		'utf8'
+	)
+
+	return { version: finalVer, disableUpdate: disable }
 }
 
-let pj = require(appjsonpath)
+if (require.main === module)
+{
+	try
+	{
+		runSync({ disableUpdate: process.argv[2] === 'disableUpdate' })
+	}
+	catch (err)
+	{
+		console.error('Error: ' + err.message)
+		process.exit(1)
+	}
+}
 
-pj.version = ver
-
-fs.writeFileSync(appjsonpath, JSON.stringify(pj, null, 2), 'utf8')
-//Enable/disable updates
-fs.writeFileSync(disableUpdatePath, 'export function disableUpdate() { return ' + (process.argv[2] == 'disableUpdate'? 'true' : 'false') + ';}', 'utf8');
+module.exports = { runSync, resolveAvVersion }

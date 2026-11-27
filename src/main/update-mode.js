@@ -19,7 +19,9 @@ export function getUpdateMode({platform, env, execPath, resourcesPath, productNa
 
 	if (platform === 'darwin')
 	{
-		return 'auto';
+		// Unsigned macOS builds cannot be replaced in-place by Squirrel.Mac
+		// (codesign validation rejects unsigned bundles), so notify and link to the release
+		return 'notify';
 	}
 
 	if (platform === 'win32')
@@ -44,5 +46,5 @@ export function getUpdateMode({platform, env, execPath, resourcesPath, productNa
 // Release page for the download link in notify mode
 export function getReleaseUrl(version)
 {
-	return 'https://github.com/jgraph/drawio-desktop/releases/tag/v' + encodeURIComponent(version);
+	return 'https://github.com/jacinlowe/drawio-AV-desktop/releases/tag/v' + encodeURIComponent(version);
 }

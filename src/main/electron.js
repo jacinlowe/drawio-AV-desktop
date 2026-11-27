@@ -109,8 +109,12 @@ autoUpdater.logger.transports.console.level = 'error'
 autoUpdater.autoDownload = false
 // A downloaded update is installed when the app quits, unless Restart to Update installed it first
 autoUpdater.autoInstallOnAppQuit = updateMode == 'auto'
+// AV versions use <drawioVersion>-av.<build> semver tags published as full GitHub
+// releases (--latest). Keep allowPrerelease false so GitHubProvider queries
+// /releases/latest and latest*.yml directly instead of probing an av.yml channel.
+autoUpdater.allowPrerelease = false
 
-const UPDATE_DOWNLOAD_URL = 'https://get.draw.io';
+const UPDATE_DOWNLOAD_URL = 'https://github.com/jacinlowe/drawio-AV-desktop/releases/latest';
 let updateFailureDialogShown = false;
 
 // Shows a user-facing fallback message when the in-app updater fails for any reason.
@@ -1939,8 +1943,8 @@ app.whenReady().then(() =>
 
 		safeUpdaterCall('setFeedURL', () => autoUpdater.setFeedURL({
 			provider: 'github',
-			repo: 'drawio-desktop',
-			owner: 'jgraph',
+			repo: 'drawio-AV-desktop',
+			owner: 'jacinlowe',
 			...(updateChannel != null ? {channel: updateChannel} : {})
 		}))
 
