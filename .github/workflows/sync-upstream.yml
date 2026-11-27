@@ -1,0 +1,103 @@
+name: Sync Upstream draw.io Release
+
+# Periodically checks jgraph/drawio-desktop for new upstream releases.
+# When upstream/dev advances, merges it into dev (preserving custom AV scripts),
+# pushes the merge commit, and immediately runs the multi-OS AV build & release.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-av
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.merge.outputs.updated }}
+      new_sha: ${{ steps.merge.outputs.new_sha }}
+      upstream_tag: ${{ steps.merge.outputs.upstream_tag }}
+    steps:
+      - name: Checkout dev branch with full history
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Check and merge upstream jgraph/drawio-desktop
+        id: merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          UPSTREAM_TAG=$(gh api repos/jgraph/drawio-desktop/releases/latest -q .tag_name || echo "upstream/dev")
+          git remote add upstream https://github.com/jgraph/drawio-desktop.git
+          git fetch upstream dev
+
+          if git merge-base --is-ancestor upstream/dev HEAD; then
+            echo "Already up to date with jgraph/drawio-desktop ($UPSTREAM_TAG)."
+            echo "Already up to date with \`jgraph/drawio-desktop\` (\`$UPSTREAM_TAG\`)." >> "$GITHUB_STEP_SUMMARY"
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "New upstream commit detected ($UPSTREAM_TAG). Merging upstream/dev..."
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if ! git merge --no-commit --no-ff upstream/dev; then
+            # Auto-resolve package.json if custom AV npm scripts conflicted with upstream bump
+            UNMERGED=$(git diff --name-only --diff-filter=U)
+            echo "Unmerged files: $UNMERGED"
+            if echo "$UNMERGED" | grep -qx "package.json"; then
+              git checkout --theirs package.json
+              git add package.json
+            fi
+          fi
+
+          # Ensure our custom AV npm scripts are always present in package.json after merge
+          node - <<'NODE_EOF'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.scripts = Object.assign({}, pkg.scripts, {
+            prestart: 'node ./sync-plugins.cjs',
+            'sync-plugins': 'node ./sync-plugins.cjs',
+            'build-win': 'node ./sync.cjs disableUpdate && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win --dir --publish never',
+            'dist-win': 'node ./sync.cjs disableUpdate && node ./sync-plugins.cjs && electron-builder --config electron-builder-av.json --win nsis zip --x64 --publish never'
+          });
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+          NODE_EOF
+          git add package.json
+
+          # Fail safely if any unexpected files remain conflicted
+          REMAINING=$(git diff --name-only --diff-filter=U)
+          if [ -n "$REMAINING" ]; then
+            echo "::error::Cannot auto-resolve merge conflicts with upstream/dev in: $REMAINING"
+            exit 1
+          fi
+
+          git commit -m "Merge upstream jgraph/drawio-desktop ($UPSTREAM_TAG)"
+          git push origin HEAD:dev
+
+          NEW_SHA=$(git rev-parse HEAD)
+          echo "Merged upstream ($UPSTREAM_TAG) -> $NEW_SHA" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "updated=true"
+            echo "new_sha=$NEW_SHA"
+            echo "upstream_tag=$UPSTREAM_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+  build_and_release:
+    needs: sync
+    if: needs.sync.outputs.updated == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-av.yml
+    with:
+      desktop_ref: ${{ needs.sync.outputs.new_sha }}
+      trigger_reason: "Triggered automatically by new upstream release `jgraph/drawio-desktop` (`${{ needs.sync.outputs.upstream_tag }}`)"

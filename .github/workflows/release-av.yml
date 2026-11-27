@@ -1,0 +1,197 @@
+name: Build and Release draw.io AV
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+    paths-ignore:
+      - '**.md'
+  repository_dispatch:
+    types:
+      - plugins-updated
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      desktop_ref:
+        description: 'Git ref or commit SHA of drawio-AV-desktop to build'
+        type: string
+        required: false
+        default: ''
+      trigger_reason:
+        description: 'Custom release note description for workflow_call triggers'
+        type: string
+        required: false
+        default: ''
+
+concurrency:
+  group: release-av
+  cancel-in-progress: false
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            builder_args: --win nsis zip --x64
+            artifact_paths: |
+              desktop/dist/drawio-AV-*.exe
+              desktop/dist/drawio-AV-*.zip
+          - os: macos-latest
+            platform: macos
+            builder_args: --mac dmg --x64 --arm64
+            artifact_paths: |
+              desktop/dist/drawio-AV-*.dmg
+          - os: ubuntu-latest
+            platform: linux
+            builder_args: --linux AppImage deb --x64
+            artifact_paths: |
+              desktop/dist/drawio-AV-*.AppImage
+              desktop/dist/drawio-AV-*.deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout drawio-AV-desktop (with drawio submodule)
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.desktop_ref || github.sha }}
+          submodules: true
+          persist-credentials: false
+          path: desktop
+
+      - name: Checkout drawio-av-plugins
+        uses: actions/checkout@v6
+        with:
+          repository: jacinlowe/drawio-av-plugins
+          ref: main
+          persist-credentials: false
+          path: drawio-av-plugins
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install Linux packaging tools
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y icnsutils graphicsmagick xz-utils
+
+      - name: Sync plugins, test, and package (${{ matrix.platform }})
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm ci
+          npm run sync -- disableUpdate
+          npm run sync-plugins
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            npm test
+          fi
+          npx electron-builder --config electron-builder-av.json ${{ matrix.builder_args }} --publish never
+
+      - name: Upload ${{ matrix.platform }} packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.platform }}
+          if-no-files-found: error
+          path: ${{ matrix.artifact_paths }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout drawio-AV-desktop
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.desktop_ref || github.sha }}
+          submodules: true
+          path: desktop
+
+      - name: Checkout drawio-av-plugins
+        uses: actions/checkout@v6
+        with:
+          repository: jacinlowe/drawio-av-plugins
+          ref: main
+          persist-credentials: false
+          path: drawio-av-plugins
+
+      - name: Download all platform packages
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRIGGER_REASON: ${{ inputs.trigger_reason }}
+          DISPATCH_SHA: ${{ github.event.client_payload.plugin_sha }}
+          DISPATCH_MSG: ${{ github.event.client_payload.plugin_message }}
+        run: |
+          DRAWIO_VER=$(tr -d '[:space:]' < desktop/drawio/VERSION)
+          BASE_TAG="v${DRAWIO_VER}-av.${GITHUB_RUN_NUMBER}"
+          TAG="$BASE_TAG"
+          SUFFIX=1
+          while gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; do
+            TAG="${BASE_TAG}.${SUFFIX}"
+            SUFFIX=$((SUFFIX + 1))
+          done
+
+          DESKTOP_FULL_SHA=$(git -C desktop rev-parse HEAD)
+          DESKTOP_SHA=$(git -C desktop rev-parse --short HEAD)
+          PLUGINS_SHA=$(git -C drawio-av-plugins rev-parse --short HEAD)
+          PLUGINS_FULL_SHA=$(git -C drawio-av-plugins rev-parse HEAD)
+          PLUGINS_MSG=$(git -C drawio-av-plugins log -1 --pretty=%s)
+          PLUGIN_LIST=$(ls -1 drawio-av-plugins/*.js | xargs -n1 basename | sed 's/^/- `/;s/$/`/')
+
+          (
+            cd release-assets
+            sha256sum * > Files-SHA256-Hashes.txt
+          )
+
+          if [ -n "$TRIGGER_REASON" ]; then
+            TRIGGER_DESC="$TRIGGER_REASON"
+          elif [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            TRIGGER_DESC="Triggered automatically by plugin update in \`jacinlowe/drawio-av-plugins\`"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TRIGGER_DESC="Triggered manually via workflow_dispatch"
+          else
+            TRIGGER_DESC="Triggered by push to \`$GITHUB_REPOSITORY\` (\`$GITHUB_REF_NAME\`)"
+          fi
+
+          cat <<EOF > release-notes.md
+          ## draw.io AV Desktop — \`$TAG\`
+
+          $TRIGGER_DESC
+
+          ### Versions & Commits
+          - **Core draw.io version:** \`$DRAWIO_VER\`
+          - **Desktop repo:** [\`$DESKTOP_SHA\`](https://github.com/$GITHUB_REPOSITORY/commit/$DESKTOP_FULL_SHA)
+          - **AV Plugins repo:** [\`$PLUGINS_SHA\`](https://github.com/jacinlowe/drawio-av-plugins/commit/$PLUGINS_FULL_SHA) — $PLUGINS_MSG
+
+          ### Bundled AV Plugins
+          $PLUGIN_LIST
+
+          > **Note on unsigned builds:** Because these packages are not signed with commercial Apple/Microsoft certificates:
+          > - **Windows:** Click *More info* → *Run anyway* if SmartScreen prompts on first launch.
+          > - **macOS:** After dragging \`draw.io.app\` to Applications, run \`xattr -cr /Applications/draw.io.app\` (or right-click → *Open* / allow in *System Settings → Privacy & Security*).
+          EOF
+
+          sed -i 's/^          //' release-notes.md
+
+          gh release create "$TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$DESKTOP_FULL_SHA" \
+            --title "draw.io AV $TAG" \
+            --notes-file release-notes.md \
+            --latest

@@ -40,9 +40,10 @@ env:
 jobs:
   update:
     runs-on: ubuntu-latest
+    # Only run on upstream jgraph/drawio-desktop, not personal forks.
     # release:published never fires for drafts; the prerelease guard is belt
     # and braces since this repo does not publish prereleases.
-    if: github.event_name != 'release' || (!github.event.release.draft && !github.event.release.prerelease)
+    if: github.repository == 'jgraph/drawio-desktop' && (github.event_name != 'release' || (!github.event.release.draft && !github.event.release.prerelease))
     steps:
     - name: Decide whether Flathub needs this release
       id: gate
