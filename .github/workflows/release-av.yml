@@ -83,18 +83,23 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y icnsutils graphicsmagick xz-utils
 
-      - name: Sync plugins, test, and package (${{ matrix.platform }})
+      - name: Install dependencies and sync plugins (${{ matrix.platform }})
         working-directory: desktop
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           npm ci
           npm run sync -- disableUpdate
           npm run sync-plugins
-          if [ "${{ matrix.platform }}" = "linux" ]; then
-            npm test
-          fi
-          npx electron-builder --config electron-builder-av.json ${{ matrix.builder_args }} --publish never
+
+      - name: Run unit tests
+        if: matrix.platform == 'linux'
+        working-directory: desktop
+        run: npm test
+
+      - name: Package application (${{ matrix.platform }})
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --config electron-builder-av.json ${{ matrix.builder_args }} --publish never
 
       - name: Upload ${{ matrix.platform }} packages
         uses: actions/upload-artifact@v7
