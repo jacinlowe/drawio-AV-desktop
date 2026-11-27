@@ -157,7 +157,11 @@ jobs:
           PLUGINS_SHA=$(git -C drawio-av-plugins rev-parse --short HEAD)
           PLUGINS_FULL_SHA=$(git -C drawio-av-plugins rev-parse HEAD)
           PLUGINS_MSG=$(git -C drawio-av-plugins log -1 --pretty=%s)
-          PLUGIN_LIST=$(ls -1 drawio-av-plugins/*.js | xargs -n1 basename | sed 's/^/- `/;s/$/`/')
+          if [ -f drawio-av-plugins/package.json ] && jq -e '.avPlugins | length > 0' drawio-av-plugins/package.json >/dev/null 2>&1; then
+            PLUGIN_LIST=$(jq -r '.avPlugins[]' drawio-av-plugins/package.json | sed 's/^/- `/;s/$/`/')
+          else
+            PLUGIN_LIST=$(ls -1 drawio-av-plugins/*.js | grep -v '\.config\.js$' | xargs -n1 basename | sed 's/^/- `/;s/$/`/')
+          fi
 
           (
             cd release-assets
